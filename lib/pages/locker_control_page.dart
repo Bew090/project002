@@ -23,11 +23,13 @@ class LockerControlPage extends StatefulWidget {
 class _LockerControlPageState extends State<LockerControlPage> {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
   bool isLocked = true;
-  DateTime? bookingStartTime; // เวลาที่จองตู้ (ไม่ใช่เวลาที่ปลดล็อก)
-  Duration? elapsedTime;
+  DateTime? bookingStartTime; // เวลาที่จองตู้
+  DateTime? bookingEndTime; // เวลาสิ้นสุดที่กำหนดจากหน้าเลือกเวลา
+  Duration? remainingTime; // เวลาคงเหลือ (นับถอยหลัง)
   List<Map<String, dynamic>> bookingHistory = [];
   bool isLoading = true;
   String? errorMessage;
+  String bookingDurationText = ''; // ข้อความระยะเวลาที่จอง
   
   @override
   void initState() {
@@ -50,21 +52,15 @@ class _LockerControlPageState extends State<LockerControlPage> {
       final lockerSnapshot = await _database.child('lockers/${widget.lockerCode}').get();
       
       if (!lockerSnapshot.exists) {
-        // ถ้าไม่มีข้อมูล ให้สร้างข้อมูลเริ่มต้น
-        final now = DateTime.now().toUtc().add(const Duration(hours: 7));
-        await _database.child('lockers/${widget.lockerCode}').set({
-          'isLocked': true,
-          'bookingStartTime': now.toIso8601String(), // บันทึกเวลาที่จองตู้
-          'currentUserId': widget.userId,
+        // ถ้าไม่มีข้อมูล แสดงว่ามีปัญหา
+        setState(() {
+          errorMessage = 'ไม่พบข้อมูลตู้ กรุณาจองตู้ใหม่';
+          isLoading = false;
         });
-      } else {
-        // ถ้ามีข้อมูลแล้ว แต่ไม่มี bookingStartTime ให้สร้างใหม่
-        final data = lockerSnapshot.value as Map<dynamic, dynamic>;
-        if (data['bookingStartTime'] == null) {
-          final now = DateTime.now().toUtc().add(const Duration(hours: 7));
-          await _database.child('lockers/${widget.lockerCode}/bookingStartTime').set(now.toIso8601String());
-        }
+        return;
       }
+
+      final lockerData = lockerSnapshot.value as Map<dynamic, dynamic>;
 
       // ฟังการเปลี่ยนแปลงสถานะล็อก
       _database.child('lockers/${widget.lockerCode}/isLocked').onValue.listen((event) {
@@ -83,7 +79,24 @@ class _LockerControlPageState extends State<LockerControlPage> {
         }
       });
 
-      // ฟังเวลาเริ่มจอง (เวลาที่จองตู้ครั้งแรก)
+      // ฟังเวลาสิ้นสุดการจอง
+      _database.child('lockers/${widget.lockerCode}/bookingEndTime').onValue.listen((event) {
+        if (mounted) {
+          setState(() {
+            if (event.snapshot.value != null) {
+              try {
+                bookingEndTime = DateTime.parse(event.snapshot.value as String);
+              } catch (e) {
+                bookingEndTime = null;
+              }
+            } else {
+              bookingEndTime = null;
+            }
+          });
+        }
+      });
+
+      // ฟังเวลาเริ่มจอง
       _database.child('lockers/${widget.lockerCode}/bookingStartTime').onValue.listen((event) {
         if (mounted) {
           setState(() {
@@ -96,6 +109,18 @@ class _LockerControlPageState extends State<LockerControlPage> {
             } else {
               bookingStartTime = null;
             }
+          });
+        }
+      });
+
+      // ฟังข้อมูลระยะเวลาที่จอง
+      _database.child('lockers/${widget.lockerCode}/bookingDuration').onValue.listen((event) {
+        if (mounted && event.snapshot.value != null) {
+          final data = event.snapshot.value as Map<dynamic, dynamic>;
+          final type = data['type'] as String;
+          final value = data['value'] as int;
+          setState(() {
+            bookingDurationText = '$value ${type == "hours" ? "ชั่วโมง" : "วัน"}';
           });
         }
       });
@@ -123,18 +148,106 @@ class _LockerControlPageState extends State<LockerControlPage> {
   }
 
   void _startTimeTracking() {
-    // อัพเดทเวลาทุก 1 วินาที - นับจากเวลาที่จองตู้ (ไม่ใช่เวลาที่ปลดล็อก)
+    // อัพเดทเวลาทุก 1 วินาที - นับถอยหลังจาก bookingEndTime
     Stream.periodic(const Duration(seconds: 1)).listen((_) {
-      if (mounted && bookingStartTime != null) {
+      if (mounted && bookingEndTime != null) {
+        final remaining = bookingEndTime!.difference(DateTime.now());
+        
         setState(() {
-          elapsedTime = DateTime.now().difference(bookingStartTime!);
+          if (remaining.isNegative) {
+            // หมดเวลาแล้ว
+            remainingTime = Duration.zero;
+          } else {
+            remainingTime = remaining;
+          }
         });
+        
+        // เตือนเมื่อเหลือเวลา 5 นาที
+        if (remaining.inMinutes == 5 && remaining.inSeconds % 60 == 0) {
+          _showTimeWarning('เหลือเวลาอีก 5 นาที');
+        }
+        
+        // เตือนเมื่อเหลือเวลา 1 นาที
+        if (remaining.inMinutes == 1 && remaining.inSeconds % 60 == 0) {
+          _showTimeWarning('เหลือเวลาอีก 1 นาที');
+        }
+        
+        // เตือนเมื่อหมดเวลา
+        if (remaining.isNegative && remaining.inSeconds > -2) {
+          _showTimeExpiredDialog();
+        }
       } else if (mounted) {
         setState(() {
-          elapsedTime = null;
+          remainingTime = null;
         });
       }
     });
+  }
+
+  void _showTimeWarning(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Text(message),
+            ],
+          ),
+          backgroundColor: const Color(0xFFED8936),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  void _showTimeExpiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFED7D7),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.timer_off,
+                color: Color(0xFFE53E3E),
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text('หมดเวลาการใช้งาน'),
+          ],
+        ),
+        content: const Text(
+          'เวลาการใช้ตู้หมดแล้ว กรุณาคืนตู้หรือต่ออายุการใช้งาน',
+          style: TextStyle(fontSize: 16),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _returnLocker();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE53E3E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('คืนตู้'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadBookingHistory() async {
@@ -559,6 +672,38 @@ class _LockerControlPageState extends State<LockerControlPage> {
                           letterSpacing: 4,
                         ),
                       ),
+                      if (bookingDurationText.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.schedule_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'จอง $bookingDurationText',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -648,15 +793,15 @@ class _LockerControlPageState extends State<LockerControlPage> {
                           ),
                         ],
                       ),
-                      // แสดงเวลาที่ใช้ตู้ตลอดเวลา
-                      if (elapsedTime != null) ...[
+                      // แสดงเวลาถอยหลังตลอดเวลา
+                      if (remainingTime != null) ...[
                         const SizedBox(height: 20),
                         const Divider(),
                         const SizedBox(height: 20),
                         Column(
                           children: [
                             const Text(
-                              'เวลาที่ใช้ตู้',
+                              'เวลาคงเหลือ',
                               style: TextStyle(
                                 fontSize: 14,
                                 color: Color(0xFF718096),
@@ -664,14 +809,48 @@ class _LockerControlPageState extends State<LockerControlPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              _formatDuration(elapsedTime!),
-                              style: const TextStyle(
+                              _formatDuration(remainingTime!),
+                              style: TextStyle(
                                 fontSize: 36,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFF2D3748),
+                                color: remainingTime!.inMinutes < 5
+                                    ? const Color(0xFFE53E3E) // สีแดงเมื่อเหลือน้อย
+                                    : const Color(0xFF2D3748),
                                 letterSpacing: 2,
                               ),
                             ),
+                            if (remainingTime!.inMinutes < 5) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFED7D7),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(
+                                      Icons.warning_amber_rounded,
+                                      size: 16,
+                                      color: Color(0xFFE53E3E),
+                                    ),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'เวลาใกล้หมด!',
+                                      style: TextStyle(
+                                        color: Color(0xFFE53E3E),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ],
