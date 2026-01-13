@@ -3,7 +3,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'LoginPage.dart';
 class ProfilePage extends StatefulWidget {
   final String userId;
 
@@ -41,45 +41,102 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _logout() async {
+    // Dialog ยืนยันครั้งเดียว
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
+        title: const Text(
+          'ยืนยันการออกจากระบบ',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        icon: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFED7D7),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.logout_rounded,
+            color: Color(0xFFE53E3E),
+            size: 32,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFED7D7),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.logout_rounded,
-                color: Color(0xFFE53E3E),
+            const Text(
+              'คุณต้องการออกจากระบบใช่หรือไม่?',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF2D3748),
               ),
             ),
-            const SizedBox(width: 12),
-            const Text('ยืนยันการออกจากระบบ'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF5F5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFED7D7)),
+              ),
+              child: Row(
+                children: const [
+                  Icon(Icons.info_outline, color: Color(0xFFE53E3E), size: 22),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'คุณจะต้องเข้าสู่ระบบใหม่อีกครั้ง',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF742A2A),
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
-        ),
-        content: const Text(
-          'คุณต้องการออกจากระบบใช่หรือไม่?',
-          style: TextStyle(fontSize: 16),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('ยกเลิก'),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF718096),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: const Text(
+              'ยกเลิก',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFE53E3E),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text('ออกจากระบบ'),
+            child: const Text(
+              'ออกจากระบบ',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -101,17 +158,17 @@ class _ProfilePageState extends State<ProfilePage> {
         if (mounted) {
           Navigator.pop(context); // ปิด loading dialog
           
-          // กลับไปหน้า Login (แก้ path ตามโปรเจกต์ของคุณ)
-          Navigator.pushNamedAndRemoveUntil(
+          // กลับไปหน้า Login โดยใช้ MaterialPageRoute
+          Navigator.pushAndRemoveUntil(
             context,
-            '/login', // หรือ route name ของหน้า login ของคุณ
+            MaterialPageRoute(builder: (context) => const LoginPage()),
             (route) => false,
           );
           
-          // หรือถ้าใช้ MaterialPageRoute
-          // Navigator.pushAndRemoveUntil(
+          // หรือถ้าใช้ Named Route (แสดงความเห็นบรรทัดด้านบนและใช้บรรทัดนี้แทน)
+          // Navigator.pushNamedAndRemoveUntil(
           //   context,
-          //   MaterialPageRoute(builder: (context) => LoginPage()),
+          //   '/login',
           //   (route) => false,
           // );
         }
@@ -120,7 +177,13 @@ class _ProfilePageState extends State<ProfilePage> {
           Navigator.pop(context); // ปิด loading dialog
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('เกิดข้อผิดพลาด: $e'),
+              content: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Text('เกิดข้อผิดพลาด: $e'),
+                ],
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -294,26 +357,6 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                         const Divider(height: 32),
                         _buildInfoRow(
-                          Icons.fingerprint_rounded,
-                          'User ID',
-                          widget.userId.length > 20
-                              ? '${widget.userId.substring(0, 20)}...'
-                              : widget.userId,
-                          const Color(0xFF48BB78),
-                        ),
-                        const Divider(height: 32),
-                        _buildInfoRow(
-                          Icons.verified_user_rounded,
-                          'สถานะการยืนยัน',
-                          currentUser?.emailVerified == true
-                              ? 'ยืนยันแล้ว ✓'
-                              : 'ยังไม่ยืนยัน',
-                          currentUser?.emailVerified == true
-                              ? const Color(0xFF48BB78)
-                              : const Color(0xFFED8936),
-                        ),
-                        const Divider(height: 32),
-                        _buildInfoRow(
                           Icons.calendar_today_rounded,
                           'เข้าร่วมเมื่อ',
                           _formatDate(currentUser?.metadata.creationTime),
@@ -469,3 +512,6 @@ class _ProfilePageState extends State<ProfilePage> {
     return '${date.day} ${months[date.month - 1]} ${date.year + 543}';
   }
 }
+
+// หมายเหตุ: อย่าลืม import LoginPage ของคุณที่ด้านบนสุดของไฟล์
+// เช่น: import 'package:your_app/pages/login_page.dart';
