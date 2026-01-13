@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
  import 'register_page.dart';
- import 'locker_selection_page.dart';
+//  import 'locker_selection_page.dart';
+import 'main_navigation_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -81,7 +82,8 @@ class _LoginPageState extends State<LoginPage> {
             );
             // TODO: สร้างหน้า UserPage แล้ว uncomment บรรทัดนี้
             //  Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => UserPage()));
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LockerSelectionPage(userId: uid)));
+            // Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LockerSelectionPage(userId: uid)));
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => MainNavigationPage(userId: uid)));
           }
         }
       }

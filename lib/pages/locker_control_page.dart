@@ -4,7 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
-import 'locker_selection_page.dart'; // import หน้าเลือกตู้
+// import 'locker_selection_page.dart'; // import หน้าเลือกตู้
+import 'main_navigation_page.dart'; // import หน้า Main Navigation
 
 class LockerControlPage extends StatefulWidget {
   final String userId; // รับ userId จากหน้าล็อกอิน
@@ -559,7 +560,7 @@ class _LockerControlPageState extends State<LockerControlPage> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (context) => LockerSelectionPage(
+              builder: (context) => MainNavigationPage(
                 userId: widget.userId,
               ),
             ),
@@ -583,7 +584,7 @@ class _LockerControlPageState extends State<LockerControlPage> {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => LockerSelectionPage(
+        builder: (context) => MainNavigationPage(
           userId: widget.userId,
         ),
       ),
