@@ -284,27 +284,92 @@ class _LockerControlPageState extends State<LockerControlPage> {
       final now = DateTime.now();
       final bangkokTime = now.toUtc().add(const Duration(hours: 7));
 
+      // แสดง Loading Dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
       // อัพเดทสถานะล็อก
       await _database.child('lockers/${widget.lockerCode}/isLocked').set(newLockState);
 
+      // สั่งรีเลย์เปิด/ปิดตู้
+      await _database.child('lockers/${widget.lockerCode}/relay').update({
+        'command': newLockState ? 'close' : 'open', // close = ล็อก, open = ปลดล็อก
+        'timestamp': bangkokTime.toIso8601String(),
+        'userId': widget.userId,
+        'status': 'pending', // สถานะรอการดำเนินการ
+      });
+
+      // รอให้ ESP32/Arduino ตอบกลับ (timeout 10 วินาที)
+      bool relayExecuted = false;
+      int waitTime = 0;
+      
+      while (!relayExecuted && waitTime < 10) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        waitTime++;
+        
+        final relaySnapshot = await _database
+            .child('lockers/${widget.lockerCode}/relay/status')
+            .get();
+            
+        if (relaySnapshot.exists && relaySnapshot.value == 'completed') {
+          relayExecuted = true;
+        }
+      }
+
       // บันทึกประวัติการล็อก/ปลดล็อก
-      await _saveHistory(newLockState ? 'lock' : 'unlock', bangkokTime, null);
+      await _saveHistory(
+        newLockState ? 'lock' : 'unlock',
+        bangkokTime,
+        null,
+        relayExecuted ? 'success' : 'timeout',
+      );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newLockState ? 'ล็อกตู้สำเร็จ' : 'ปลดล็อกตู้สำเร็จ'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: newLockState ? const Color(0xFF48BB78) : const Color(0xFFED8936),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
+        Navigator.pop(context); // ปิด loading dialog
+        
+        if (relayExecuted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Text(newLockState ? 'ล็อกตู้สำเร็จ' : 'ปลดล็อกตู้สำเร็จ'),
+                ],
+              ),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: newLockState ? const Color(0xFF48BB78) : const Color(0xFFED8936),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: const [
+                  Icon(Icons.warning, color: Colors.white),
+                  SizedBox(width: 12),
+                  Text('คำสั่งส่งแล้ว แต่ไม่ได้รับการตอบกลับ'),
+                ],
+              ),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
       }
 
       await _loadBookingHistory();
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // ปิด loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('เกิดข้อผิดพลาด: $e'),
@@ -481,13 +546,14 @@ class _LockerControlPageState extends State<LockerControlPage> {
     );
   }
 
-  Future<void> _saveHistory(String action, DateTime timestamp, Duration? duration) async {
+  Future<void> _saveHistory(String action, DateTime timestamp, Duration? duration, [String? relayStatus]) async {
     final historyRef = _database.child('lockers/${widget.lockerCode}/history').push();
     await historyRef.set({
       'action': action,
       'timestamp': timestamp.toIso8601String(),
       'duration': duration?.inSeconds,
       'userId': widget.userId,
+      'relayStatus': relayStatus ?? 'unknown',
     });
   }
 
