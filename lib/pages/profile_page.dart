@@ -3,7 +3,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'LoginPage.dart';
+
+
 class ProfilePage extends StatefulWidget {
   final String userId;
 
@@ -158,19 +159,8 @@ class _ProfilePageState extends State<ProfilePage> {
         if (mounted) {
           Navigator.pop(context); // ปิด loading dialog
           
-          // กลับไปหน้า Login โดยใช้ MaterialPageRoute
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const LoginPage()),
-            (route) => false,
-          );
-          
-          // หรือถ้าใช้ Named Route (แสดงความเห็นบรรทัดด้านบนและใช้บรรทัดนี้แทน)
-          // Navigator.pushNamedAndRemoveUntil(
-          //   context,
-          //   '/login',
-          //   (route) => false,
-          // );
+          // Firebase จะ auto redirect ไปหน้า Login เอง
+          // เพราะใช้ StreamBuilder ตรวจสอบ authStateChanges() ใน main.dart
         }
       } catch (e) {
         if (mounted) {
