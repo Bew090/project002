@@ -63,7 +63,7 @@ class _LockerControlPageState extends State<LockerControlPage> {
 
       final lockerData = lockerSnapshot.value as Map<dynamic, dynamic>;
 
-      // อ่านค่า isLocked จาก Database และตั้งค่าให้ state
+      // อ่านค่า isLocked จาก Database และตั้งค่าให้ state (ไม่แก้ไขค่าใน Database)
       final currentIsLocked = lockerData['isLocked'] as bool? ?? false;
       
       setState(() {
@@ -71,11 +71,11 @@ class _LockerControlPageState extends State<LockerControlPage> {
         isLoading = false;
       });
 
-      // ฟังการเปลี่ยนแปลงสถานะล็อก
+      // ฟังการเปลี่ยนแปลงสถานะล็อก (เฉพาะอ่านค่า ไม่เขียนค่า)
       _database.child('lockers/${widget.lockerCode}/isLocked').onValue.listen((event) {
         if (mounted) {
           setState(() {
-            isLocked = event.snapshot.value as bool? ?? false; // default เป็น false (ปลดล็อก)
+            isLocked = event.snapshot.value as bool? ?? false;
           });
         }
       }, onError: (error) {
