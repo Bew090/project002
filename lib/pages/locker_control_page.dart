@@ -22,6 +22,12 @@ class LockerControlPage extends StatefulWidget {
 }
 
 class _LockerControlPageState extends State<LockerControlPage> {
+  // ===== โหมดทดลองใช้ (DEBUG MODE) =====
+  static const bool DEBUG_MODE = true; // เปลี่ยนเป็น false เพื่อปิดโหมดทดลอง
+  static const int DEBUG_GRACE_PERIOD_SECONDS = 30; // เวลาช่วงผ่อนผันในโหมดทดลอง (30 วินาที)
+  static const int PRODUCTION_GRACE_PERIOD_MINUTES = 5; // เวลาช่วงผ่อนผันจริง (5 นาที)
+  // ======================================
+  
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
   bool isLocked = false; // เริ่มต้นเป็น false (ปลดล็อก)
   DateTime? bookingStartTime; // เวลาที่จองตู้
@@ -34,8 +40,16 @@ class _LockerControlPageState extends State<LockerControlPage> {
   bool isTimeExpired = false; // ตัวแปรเช็คว่าหมดเวลาหรือยัง
   bool hasShownExpiredDialog = false; // ป้องกันแสดง dialog ซ้ำ
   bool isShowingDialog = false; // ป้องกัน dialog ซ้อนกัน
-  Duration? gracePeriodRemaining; // เวลาคงเหลือของช่วงผ่อนผัน 5 นาที
-  bool isInGracePeriod = false; // อยู่ในช่วง 5 นาทีหลังหมดเวลาหรือไม่
+  Duration? gracePeriodRemaining; // เวลาคงเหลือของช่วงผ่อนผัน
+  bool isInGracePeriod = false; // อยู่ในช่วงผ่อนผันหรือไม่
+  
+  // ฟังก์ชันคำนวณระยะเวลาช่วงผ่อนผัน
+  Duration get _gracePeriodDuration {
+    if (DEBUG_MODE) {
+      return Duration(seconds: DEBUG_GRACE_PERIOD_SECONDS);
+    }
+    return Duration(minutes: PRODUCTION_GRACE_PERIOD_MINUTES);
+  }
   
   @override
   void initState() {
@@ -197,21 +211,34 @@ class _LockerControlPageState extends State<LockerControlPage> {
         
         setState(() {
           if (remaining.isNegative) {
-            // หมดเวลาแล้ว - เริ่มนับช่วงผ่อนผัน 5 นาที
+            // หมดเวลาแล้ว - เริ่มนับช่วงผ่อนผัน
             remainingTime = Duration.zero;
             isTimeExpired = true;
-            isInGracePeriod = true;
             
-            // คำนวณเวลาคงเหลือของช่วง 5 นาที
-            final gracePeriodEnd = bookingEndTime!.add(const Duration(minutes: 5));
-            final graceRemaining = gracePeriodEnd.difference(DateTime.now());
-            
-            if (graceRemaining.isNegative) {
-              // หมดช่วง 5 นาทีแล้ว - คืนตู้อัตโนมัติ
-              gracePeriodRemaining = Duration.zero;
-              _autoReturnLocker();
+            if (DEBUG_MODE) {
+              // โหมดทดลอง: ใช้ช่วงผ่อนผันจาก DEBUG_GRACE_PERIOD_SECONDS
+              isInGracePeriod = true;
+              final gracePeriodEnd = bookingEndTime!.add(_gracePeriodDuration);
+              final graceRemaining = gracePeriodEnd.difference(DateTime.now());
+              
+              if (graceRemaining.isNegative) {
+                gracePeriodRemaining = Duration.zero;
+                _autoReturnLocker();
+              } else {
+                gracePeriodRemaining = graceRemaining;
+              }
             } else {
-              gracePeriodRemaining = graceRemaining;
+              // โหมดจริง: ใช้ช่วงผ่อนผัน 5 นาที
+              isInGracePeriod = true;
+              final gracePeriodEnd = bookingEndTime!.add(_gracePeriodDuration);
+              final graceRemaining = gracePeriodEnd.difference(DateTime.now());
+              
+              if (graceRemaining.isNegative) {
+                gracePeriodRemaining = Duration.zero;
+                _autoReturnLocker();
+              } else {
+                gracePeriodRemaining = graceRemaining;
+              }
             }
           } else {
             remainingTime = remaining;
@@ -239,13 +266,24 @@ class _LockerControlPageState extends State<LockerControlPage> {
           });
         }
         
-        // เตือนเมื่อเหลือเวลาในช่วงผ่อนผัน 2 นาที
+        // เตือนระหว่างช่วงผ่อนผัน
         if (isInGracePeriod && gracePeriodRemaining != null) {
-          if (gracePeriodRemaining!.inMinutes == 2 && gracePeriodRemaining!.inSeconds % 60 == 0) {
-            _showTimeWarning('⚠️ ระบบจะคืนตู้อัตโนมัติในอีก 2 นาที!');
-          }
-          if (gracePeriodRemaining!.inMinutes == 1 && gracePeriodRemaining!.inSeconds % 60 == 0) {
-            _showTimeWarning('⚠️ ระบบจะคืนตู้อัตโนมัติในอีก 1 นาที!');
+          if (DEBUG_MODE) {
+            // โหมดทดลอง: เตือนที่ 15 วินาทีและ 5 วินาที
+            if (gracePeriodRemaining!.inSeconds == 15) {
+              _showTimeWarning('⚠️ [DEBUG] ระบบจะคืนตู้อัตโนมัติในอีก 15 วินาที!');
+            }
+            if (gracePeriodRemaining!.inSeconds == 5) {
+              _showTimeWarning('⚠️ [DEBUG] ระบบจะคืนตู้อัตโนมัติในอีก 5 วินาที!');
+            }
+          } else {
+            // โหมดจริง: เตือนที่ 2 นาทีและ 1 นาที
+            if (gracePeriodRemaining!.inMinutes == 2 && gracePeriodRemaining!.inSeconds % 60 == 0) {
+              _showTimeWarning('⚠️ ระบบจะคืนตู้อัตโนมัติในอีก 2 นาที!');
+            }
+            if (gracePeriodRemaining!.inMinutes == 1 && gracePeriodRemaining!.inSeconds % 60 == 0) {
+              _showTimeWarning('⚠️ ระบบจะคืนตู้อัตโนมัติในอีก 1 นาที!');
+            }
           }
         }
       } else if (mounted) {
@@ -1082,6 +1120,52 @@ class _LockerControlPageState extends State<LockerControlPage> {
                   ),
                   const SizedBox(height: 40),
                   
+                  // แสดง DEBUG Badge ถ้าเปิดโหมดทดลอง
+                  if (DEBUG_MODE) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEDF2F7),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF4A5568), width: 2),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.bug_report,
+                            color: Color(0xFF4A5568),
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'โหมดทดลองใช้ (DEBUG)',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF4A5568),
+                                  ),
+                                ),
+                                Text(
+                                  'ช่วงผ่อนผัน: $DEBUG_GRACE_PERIOD_SECONDS วินาที',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Color(0xFF718096),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  
                   // แสดงแบนเนอร์เตือนเมื่อหมดเวลา
                   if (isTimeExpired) ...[
                     Container(
@@ -1110,9 +1194,9 @@ class _LockerControlPageState extends State<LockerControlPage> {
                           ),
                           const SizedBox(height: 8),
                           if (gracePeriodRemaining != null && gracePeriodRemaining!.inSeconds > 0) ...[
-                            const Text(
-                              'ระบบจะคืนตู้อัตโนมัติใน',
-                              style: TextStyle(
+                            Text(
+                              DEBUG_MODE ? 'ระบบจะคืนตู้อัตโนมัติใน (DEBUG)' : 'ระบบจะคืนตู้อัตโนมัติใน',
+                              style: const TextStyle(
                                 fontSize: 14,
                                 color: Color(0xFFE53E3E),
                               ),
