@@ -46,6 +46,9 @@ class _AdminControlPageState extends State<AdminControlPage> {
           setState(() {
             isAdmin = true;
           });
+          // โหลดข้อมูลผู้ใช้ทั้งหมดก่อน
+          await _preloadAllUsers();
+          // แล้วค่อยโหลดข้อมูลตู้
           _loadAllData();
         } else {
           setState(() {
@@ -62,12 +65,57 @@ class _AdminControlPageState extends State<AdminControlPage> {
     }
   }
 
-  void _loadAllData() {
+  Future<void> _preloadAllUsers() async {
+    try {
+      final snapshot = await _database.child('users').get();
+      if (!snapshot.exists) return;
+
+      final usersMap = snapshot.value as Map<dynamic, dynamic>;
+      
+      usersMap.forEach((userId, userData) {
+        if (userData is Map) {
+          // ดึงข้อมูล name และ email ถ้าไม่มีให้ใช้ค่าเริ่มต้น
+          String name = 'ไม่ระบุชื่อ';
+          String email = 'ไม่ระบุอีเมล';
+          
+          // เช็คว่ามี name หรือไม่
+          if (userData.containsKey('name') && userData['name'] != null) {
+            name = userData['name'].toString();
+          }
+          
+          // เช็คว่ามี email หรือไม่
+          if (userData.containsKey('email') && userData['email'] != null) {
+            email = userData['email'].toString();
+          }
+          
+          setState(() {
+            usersData[userId.toString()] = {
+              'name': name,
+              'email': email,
+              'platform': userData['platform']?.toString() ?? 'web',
+              'lastActive': userData['lastActive']?.toString(),
+              'bookedAt': userData['bookedAt']?.toString(),
+              'lockerCode': userData['lockerCode']?.toString(),
+            };
+          });
+          
+          debugPrint('Loaded user ${userId}: name=$name, email=$email');
+        }
+      });
+      
+      debugPrint('✅ Preloaded ${usersData.length} users');
+    } catch (e) {
+      debugPrint('❌ Error preloading users: $e');
+    }
+  }
+
+  void _loadAllData() async {
     // โหลดข้อมูลตู้ทั้งหมด
     for (String lockerCode in lockerCodes) {
-      _database.child('lockers/$lockerCode').onValue.listen((event) {
+      _database.child('lockers/$lockerCode').onValue.listen((event) async {
         if (event.snapshot.exists && mounted) {
           final data = event.snapshot.value as Map<dynamic, dynamic>;
+          
           setState(() {
             lockersData[lockerCode] = {
               'isLocked': data['isLocked'] ?? false,
@@ -78,17 +126,23 @@ class _AdminControlPageState extends State<AdminControlPage> {
             };
           });
           
-          // โหลดข้อมูลผู้ใช้ถ้ามี
-          if (data['currentUserId'] != null) {
-            _loadUserData(data['currentUserId'] as String);
+          // ถ้าข้อมูลผู้ใช้ยังไม่มี ให้โหลดเพิ่ม
+          final currentUserId = data['currentUserId'] as String?;
+          if (currentUserId != null && !usersData.containsKey(currentUserId)) {
+            await _loadUserData(currentUserId);
           }
         }
       });
     }
     
-    setState(() {
-      isLoading = false;
-    });
+    // รอให้โหลดข้อมูลเสร็จ
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    if (mounted) {
+      setState(() {
+        isLoading = false;
+      });
+    }
   }
 
   Future<void> _loadUserData(String userId) async {
@@ -96,15 +150,41 @@ class _AdminControlPageState extends State<AdminControlPage> {
       final snapshot = await _database.child('users/$userId').get();
       if (snapshot.exists && mounted) {
         final data = snapshot.value as Map<dynamic, dynamic>;
+        
+        // ดึงข้อมูล name และ email ถ้าไม่มีให้ใช้ค่าเริ่มต้น
+        String userName = 'ไม่ระบุชื่อ';
+        String userEmail = 'ไม่ระบุอีเมล';
+        
+        if (data.containsKey('name') && data['name'] != null) {
+          userName = data['name'].toString();
+        }
+        
+        if (data.containsKey('email') && data['email'] != null) {
+          userEmail = data['email'].toString();
+        }
+        
+        debugPrint('📝 Loaded user $userId: name=$userName, email=$userEmail');
+        
         setState(() {
           usersData[userId] = {
-            'name': data['name'] ?? 'ไม่ระบุชื่อ',
-            'email': data['email'] ?? 'ไม่ระบุอีเมล',
+            'name': userName,
+            'email': userEmail,
+            'platform': data['platform']?.toString() ?? 'web',
+            'lastActive': data['lastActive']?.toString(),
+            'bookedAt': data['bookedAt']?.toString(),
+            'lockerCode': data['lockerCode']?.toString(),
           };
         });
       }
     } catch (e) {
-      debugPrint('Error loading user data: $e');
+      debugPrint('❌ Error loading user $userId: $e');
+      setState(() {
+        usersData[userId] = {
+          'name': 'Error: ${e.toString().substring(0, 20)}',
+          'email': 'กรุณาตรวจสอบข้อมูล',
+          'platform': 'unknown',
+        };
+      });
     }
   }
 
@@ -438,6 +518,317 @@ class _AdminControlPageState extends State<AdminControlPage> {
     }
   }
 
+  // Future<void> _showAllUsersDialog() async {
+  //   showDialog(
+  //     context: context,
+  //     builder: (ctx) => Dialog(
+  //       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+  //       child: Container(
+  //         constraints: const BoxConstraints(maxHeight: 600),
+  //         child: Column(
+  //           mainAxisSize: MainAxisSize.min,
+  //           children: [
+  //             Container(
+  //               padding: const EdgeInsets.all(20),
+  //               decoration: const BoxDecoration(
+  //                 gradient: LinearGradient(
+  //                   colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+  //                   begin: Alignment.topLeft,
+  //                   end: Alignment.bottomRight,
+  //                 ),
+  //                 borderRadius: BorderRadius.only(
+  //                   topLeft: Radius.circular(20),
+  //                   topRight: Radius.circular(20),
+  //                 ),
+  //               ),
+  //               child: Row(
+  //                 children: const [
+  //                   Icon(Icons.people_rounded, color: Colors.white, size: 28),
+  //                   SizedBox(width: 12),
+  //                   Text(
+  //                     'ผู้ใช้งานทั้งหมด',
+  //                     style: TextStyle(
+  //                       color: Colors.white,
+  //                       fontSize: 20,
+  //                       fontWeight: FontWeight.bold,
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //             ),
+  //             Flexible(
+  //               child: FutureBuilder<List<Map<String, dynamic>>>(
+  //                 future: _loadAllUsers(),
+  //                 builder: (context, snapshot) {
+  //                   if (snapshot.connectionState == ConnectionState.waiting) {
+  //                     return const Center(
+  //                       child: Padding(
+  //                         padding: EdgeInsets.all(40.0),
+  //                         child: CircularProgressIndicator(),
+  //                       ),
+  //                     );
+  //                   }
+
+  //                   if (!snapshot.hasData || snapshot.data!.isEmpty) {
+  //                     return const Center(
+  //                       child: Padding(
+  //                         padding: EdgeInsets.all(40.0),
+  //                         child: Text('ไม่พบข้อมูลผู้ใช้'),
+  //                       ),
+  //                     );
+  //                   }
+
+  //                   final users = snapshot.data!;
+  //                   return ListView.builder(
+  //                     shrinkWrap: true,
+  //                     padding: const EdgeInsets.all(16),
+  //                     itemCount: users.length,
+  //                     itemBuilder: (context, index) {
+  //                       final user = users[index];
+  //                       final hasLocker = user['lockerCode'] != null;
+                        
+  //                       return Container(
+  //                         margin: const EdgeInsets.only(bottom: 12),
+  //                         decoration: BoxDecoration(
+  //                           color: const Color(0xFFF7FAFC),
+  //                           borderRadius: BorderRadius.circular(12),
+  //                           border: Border.all(
+  //                             color: hasLocker 
+  //                                 ? const Color(0xFF667EEA).withOpacity(0.3)
+  //                                 : const Color(0xFFE2E8F0),
+  //                           ),
+  //                         ),
+  //                         child: ListTile(
+  //                           contentPadding: const EdgeInsets.all(12),
+  //                           leading: Container(
+  //                             padding: const EdgeInsets.all(10),
+  //                             decoration: BoxDecoration(
+  //                               color: hasLocker 
+  //                                   ? const Color(0xFF667EEA).withOpacity(0.1)
+  //                                   : const Color(0xFFEDF2F7),
+  //                               borderRadius: BorderRadius.circular(10),
+  //                             ),
+  //                             child: Icon(
+  //                               hasLocker 
+  //                                   ? Icons.person_rounded 
+  //                                   : Icons.person_outline_rounded,
+  //                               color: hasLocker 
+  //                                   ? const Color(0xFF667EEA)
+  //                                   : const Color(0xFF718096),
+  //                             ),
+  //                           ),
+  //                           title: Text(
+  //                             user['name'] ?? 'ไม่ระบุชื่อ',
+  //                             style: const TextStyle(
+  //                               fontWeight: FontWeight.bold,
+  //                               fontSize: 16,
+  //                             ),
+  //                           ),
+  //                           subtitle: Column(
+  //                             crossAxisAlignment: CrossAxisAlignment.start,
+  //                             children: [
+  //                               const SizedBox(height: 4),
+  //                               Text(
+  //                                 user['email'] ?? 'ไม่ระบุอีเมล',
+  //                                 style: const TextStyle(
+  //                                   fontSize: 13,
+  //                                   color: Color(0xFF718096),
+  //                                 ),
+  //                               ),
+  //                               if (hasLocker) ...[
+  //                                 const SizedBox(height: 8),
+  //                                 Container(
+  //                                   padding: const EdgeInsets.symmetric(
+  //                                     horizontal: 8,
+  //                                     vertical: 4,
+  //                                   ),
+  //                                   decoration: BoxDecoration(
+  //                                     color: const Color(0xFF667EEA),
+  //                                     borderRadius: BorderRadius.circular(6),
+  //                                   ),
+  //                                   child: Row(
+  //                                     mainAxisSize: MainAxisSize.min,
+  //                                     children: [
+  //                                       const Icon(
+  //                                         Icons.inventory_2_rounded,
+  //                                         color: Colors.white,
+  //                                         size: 14,
+  //                                       ),
+  //                                       const SizedBox(width: 4),
+  //                                       Text(
+  //                                         'ตู้ ${user['lockerCode']}',
+  //                                         style: const TextStyle(
+  //                                           color: Colors.white,
+  //                                           fontSize: 12,
+  //                                           fontWeight: FontWeight.bold,
+  //                                         ),
+  //                                       ),
+  //                                     ],
+  //                                   ),
+  //                                 ),
+  //                               ],
+  //                               if (user['lastActive'] != null) ...[
+  //                                 const SizedBox(height: 4),
+  //                                 Row(
+  //                                   children: [
+  //                                     const Icon(
+  //                                       Icons.access_time_rounded,
+  //                                       size: 12,
+  //                                       color: Color(0xFF718096),
+  //                                     ),
+  //                                     const SizedBox(width: 4),
+  //                                     Text(
+  //                                       'ล่าสุด: ${_formatDateTime(user['lastActive'])}',
+  //                                       style: const TextStyle(
+  //                                         fontSize: 11,
+  //                                         color: Color(0xFF718096),
+  //                                       ),
+  //                                     ),
+  //                                   ],
+  //                                 ),
+  //                               ],
+  //                             ],
+  //                           ),
+  //                           trailing: user['platform'] != null
+  //                               ? Container(
+  //                                   padding: const EdgeInsets.symmetric(
+  //                                     horizontal: 8,
+  //                                     vertical: 4,
+  //                                   ),
+  //                                   decoration: BoxDecoration(
+  //                                     color: const Color(0xFFEDF2F7),
+  //                                     borderRadius: BorderRadius.circular(6),
+  //                                   ),
+  //                                   child: Text(
+  //                                     user['platform'] == 'web' ? 'Web' : 'Mobile',
+  //                                     style: const TextStyle(
+  //                                       fontSize: 11,
+  //                                       color: Color(0xFF4A5568),
+  //                                     ),
+  //                                   ),
+  //                                 )
+  //                               : null,
+  //                         ),
+  //                       );
+  //                     },
+  //                   );
+  //                 },
+  //               ),
+  //             ),
+  //             Padding(
+  //               padding: const EdgeInsets.all(16),
+  //               child: SizedBox(
+  //                 width: double.infinity,
+  //                 child: ElevatedButton(
+  //                   onPressed: () => Navigator.pop(ctx),
+  //                   style: ElevatedButton.styleFrom(
+  //                     backgroundColor: const Color(0xFF667EEA),
+  //                     padding: const EdgeInsets.symmetric(vertical: 14),
+  //                     shape: RoundedRectangleBorder(
+  //                       borderRadius: BorderRadius.circular(12),
+  //                     ),
+  //                   ),
+  //                   child: const Text(
+  //                     'ปิด',
+  //                     style: TextStyle(
+  //                       fontSize: 16,
+  //                       fontWeight: FontWeight.bold,
+  //                     ),
+  //                   ),
+  //                 ),
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     ),
+  //   );
+  // }
+
+  // Future<List<Map<String, dynamic>>> _loadAllUsers() async {
+  //   try {
+  //     final snapshot = await _database.child('users').get();
+  //     if (!snapshot.exists) return [];
+
+  //     final usersMap = snapshot.value as Map<dynamic, dynamic>;
+  //     final usersList = <Map<String, dynamic>>[];
+
+  //     usersMap.forEach((userId, userData) {
+  //       if (userData is Map) {
+  //         // ดึงข้อมูลแบบปลอดภัย
+  //         String name = 'ไม่ระบุชื่อ';
+  //         String email = 'ไม่ระบุอีเมล';
+          
+  //         if (userData.containsKey('name') && userData['name'] != null) {
+  //           name = userData['name'].toString();
+  //         }
+          
+  //         if (userData.containsKey('email') && userData['email'] != null) {
+  //           email = userData['email'].toString();
+  //         }
+          
+  //         usersList.add({
+  //           'userId': userId.toString(),
+  //           'name': name,
+  //           'email': email,
+  //           'lockerCode': userData['lockerCode']?.toString(),
+  //           'platform': userData['platform']?.toString() ?? 'web',
+  //           'lastActive': userData['lastActive']?.toString(),
+  //           'bookedAt': userData['bookedAt']?.toString(),
+  //         });
+  //       }
+  //     });
+
+  //     // เรียงตามว่ามีตู้หรือไม่ แล้วตามชื่อ
+  //     usersList.sort((a, b) {
+  //       if (a['lockerCode'] != null && b['lockerCode'] == null) return -1;
+  //       if (a['lockerCode'] == null && b['lockerCode'] != null) return 1;
+  //       return (a['name'] ?? '').compareTo(b['name'] ?? '');
+  //     });
+
+  //     return usersList;
+  //   } catch (e) {
+  //     debugPrint('❌ Error loading all users: $e');
+  //     return [];
+  //   }
+  // }
+
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF718096),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -522,17 +913,23 @@ class _AdminControlPageState extends State<AdminControlPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Color(0xFF2D3748)),
-            onPressed: () {
-              setState(() {
-                isLoading = true;
-              });
-              _loadAllData();
-            },
-          ),
-        ],
+        // actions: [
+        //   IconButton(
+        //     icon: const Icon(Icons.people_rounded, color: Color(0xFF667EEA)),
+        //     tooltip: 'ดูผู้ใช้ทั้งหมด',
+        //     onPressed: _showAllUsersDialog,
+        //   ),
+        //   IconButton(
+        //     icon: const Icon(Icons.refresh, color: Color(0xFF2D3748)),
+        //     onPressed: () async {
+        //       setState(() {
+        //         isLoading = true;
+        //       });
+        //       await _preloadAllUsers();
+        //       _loadAllData();
+        //     },
+        //   ),
+        // ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
@@ -587,6 +984,77 @@ class _AdminControlPageState extends State<AdminControlPage> {
             ),
             
             const SizedBox(height: 32),
+            
+            // สถิติผู้ใช้งาน
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: const [
+                      Icon(
+                        Icons.analytics_rounded,
+                        color: Color(0xFF667EEA),
+                        size: 24,
+                      ),
+                      SizedBox(width: 12),
+                      Text(
+                        'สถิติการใช้งาน',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF2D3748),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatCard(
+                          'ตู้ทั้งหมด',
+                          lockerCodes.length.toString(),
+                          Icons.inventory_2_rounded,
+                          const Color(0xFF667EEA),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildStatCard(
+                          'ตู้ว่าง',
+                          lockersData.values.where((data) => data['currentUserId'] == null).length.toString(),
+                          Icons.lock_open_rounded,
+                          const Color(0xFF48BB78),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildStatCard(
+                          'กำลังใช้',
+                          lockersData.values.where((data) => data['currentUserId'] != null).length.toString(),
+                          Icons.lock_rounded,
+                          const Color(0xFFE53E3E),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 24),
             
             // Lockers List
             ListView.builder(
@@ -736,12 +1204,19 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                   children: [
                                     Row(
                                       children: [
-                                        const Icon(
-                                          Icons.person_rounded,
-                                          color: Color(0xFF4A5568),
-                                          size: 20,
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF667EEA).withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: const Icon(
+                                            Icons.person_rounded,
+                                            color: Color(0xFF667EEA),
+                                            size: 20,
+                                          ),
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 12),
                                         Expanded(
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -753,24 +1228,70 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                                   color: Color(0xFF718096),
                                                 ),
                                               ),
+                                              const SizedBox(height: 2),
                                               Text(
-                                                userData?['name'] ?? 'ไม่ทราบชื่อ',
+                                                userData?['name'] != null && userData!['name'] != 'ไม่ระบุชื่อ'
+                                                    ? userData['name']
+                                                    : currentUserId != null 
+                                                        ? 'ผู้ใช้ ${currentUserId.substring(0, 8)}...'
+                                                        : 'ไม่ทราบชื่อ',
                                                 style: const TextStyle(
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.bold,
                                                   color: Color(0xFF2D3748),
                                                 ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
                                               Text(
-                                                userData?['email'] ?? 'ไม่ทราบอีเมล',
+                                                userData?['email'] != null && userData!['email'] != 'ไม่ระบุอีเมล'
+                                                    ? userData['email']
+                                                    : 'ไม่มีข้อมูลอีเมล',
                                                 style: const TextStyle(
-                                                  fontSize: 14,
+                                                  fontSize: 13,
                                                   color: Color(0xFF718096),
                                                 ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
                                             ],
                                           ),
                                         ),
+                                        if (userData?['platform'] != null)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: const Color(0xFFE2E8F0),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  userData?['platform'] == 'web'
+                                                      ? Icons.web_rounded
+                                                      : Icons.phone_android_rounded,
+                                                  size: 14,
+                                                  color: const Color(0xFF718096),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  userData?['platform'] == 'web' ? 'Web' : 'App',
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: Color(0xFF718096),
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                       ],
                                     ),
                                     const SizedBox(height: 12),
@@ -782,18 +1303,32 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              const Text(
-                                                'เริ่มจอง',
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Color(0xFF718096),
-                                                ),
+                                              Row(
+                                                children: const [
+                                                  Icon(
+                                                    Icons.login_rounded,
+                                                    size: 14,
+                                                    color: Color(0xFF718096),
+                                                  ),
+                                                  SizedBox(width: 4),
+                                                  Text(
+                                                    'เริ่มจอง',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Color(0xFF718096),
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
-                                                _formatDateTime(lockerData?['bookingStartTime']),
+                                                lockerData?['bookingStartTime'] != null 
+                                                    ? _formatDateTime(lockerData?['bookingStartTime'])
+                                                    : userData?['bookedAt'] != null
+                                                        ? _formatDateTime(userData?['bookedAt'])
+                                                        : '-',
                                                 style: const TextStyle(
-                                                  fontSize: 14,
+                                                  fontSize: 13,
                                                   fontWeight: FontWeight.w600,
                                                   color: Color(0xFF2D3748),
                                                 ),
@@ -805,18 +1340,32 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              const Text(
-                                                'สิ้นสุด',
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Color(0xFF718096),
-                                                ),
+                                              Row(
+                                                children: const [
+                                                  Icon(
+                                                    Icons.logout_rounded,
+                                                    size: 14,
+                                                    color: Color(0xFF718096),
+                                                  ),
+                                                  SizedBox(width: 4),
+                                                  Text(
+                                                    'สิ้นสุด',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Color(0xFF718096),
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
-                                                _formatDateTime(lockerData?['bookingEndTime']),
+                                                lockerData?['bookingEndTime'] != null
+                                                    ? _formatDateTime(lockerData?['bookingEndTime'])
+                                                    : userData?['bookingEndTime'] != null
+                                                        ? _formatDateTime(userData?['bookingEndTime'])
+                                                        : '-',
                                                 style: const TextStyle(
-                                                  fontSize: 14,
+                                                  fontSize: 13,
                                                   fontWeight: FontWeight.w600,
                                                   color: Color(0xFF2D3748),
                                                 ),
@@ -835,6 +1384,7 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
                                         children: [
                                           const Icon(
                                             Icons.timer_rounded,
@@ -843,7 +1393,11 @@ class _AdminControlPageState extends State<AdminControlPage> {
                                           ),
                                           const SizedBox(width: 8),
                                           Text(
-                                            'เหลือเวลา: ${_getRemainingTime(lockerData?['bookingEndTime'])}',
+                                            lockerData?['bookingEndTime'] != null
+                                                ? 'เหลือเวลา: ${_getRemainingTime(lockerData?['bookingEndTime'])}'
+                                                : userData?['bookingEndTime'] != null
+                                                    ? 'เหลือเวลา: ${_getRemainingTime(userData?['bookingEndTime'])}'
+                                                    : 'ไม่มีข้อมูลเวลาสิ้นสุด',
                                             style: const TextStyle(
                                               color: Color(0xFFE53E3E),
                                               fontSize: 14,
